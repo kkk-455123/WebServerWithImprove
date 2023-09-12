@@ -4,6 +4,11 @@
 #include <vector>
 #include <hiredis/hiredis.h>
 #include <chrono>
+#include <queue>
+#include <mutex>
+#include <thread>  // lock_guard
+#include <semaphore.h>
+#include "../log/log.h"
 // #define NDEBUG
 #include <cassert>
 
@@ -14,68 +19,73 @@
 class Redis {
 public:
   // 构造函数，连接到Redis服务器
-  Redis(const std::string& host, int port) {
-    // 使用hiredis库的函数来连接到Redis服务器
-    redis_ = redisConnect(host.c_str(), port);
-    if (redis_ == NULL || redis_->err) {
-      throw std::runtime_error("Error: failed to connect to Redis server.");
-    }
-  }
-
+  Redis(const std::string& host, int port);
   // 析构函数，断开与Redis服务器的连接
-  ~Redis() {
-    // 使用hiredis库的函数来断开与Redis服务器的连接
-    redisFree(redis_);
-  }
+  ~Redis();
 
-  // 实现SET命令
-  void set(const std::string& key, const std::string& value) {
-    // 使用hiredis库的函数来执行SET命令
-    redisReply* reply = static_cast<redisReply*>(
-        redisCommand(redis_, "SET %b %b", key.data(), key.size(), value.data(), value.size()));
-    if (reply == NULL) {
-        throw std::runtime_error("Error: failed to execute SET command.");
-    }
-    freeReplyObject(reply);
-  } 
-
-  // 实现GET命令
-  std::string get(const std::string& key) {
-    // 使用hiredis库的函数来执行GET命令
-    redisReply* reply = static_cast<redisReply*>(redisCommand(redis_, "GET %b", key.data(), key.size()));
-    if (reply == NULL || reply->type == REDIS_REPLY_NIL) {
-        // throw std::runtime_error("Error: failed to execute GET command.");
-        freeReplyObject(reply);
-        return std::string("");
-    }
-    std::string value(reply->str, reply->len);
-    freeReplyObject(reply);
-    return value;
-  }
-
-    // 实现LRANGE命令
-    // 用于获取列表中指定区间内的元素的命令
-    std::vector<std::string> lrange(const std::string& key, int start, int end) {
-        // 使用hiredis库的函数来执行LRANGE命令
-        std::vector<std::string> values;
-        redisReply* reply = static_cast<redisReply*> ( 
-            redisCommand(redis_, "LRANGE %b %d %d", key.data(), key.size(), start, end));
-        if (reply == NULL || reply->type != REDIS_REPLY_ARRAY) 
-            throw std::runtime_error("Error: failed to execute LRANGE command.");
-        for (size_t i = 0; i < reply->elements; ++i) 
-            values.emplace_back(reply->element[i]->str, reply->element[i]->len);
-        freeReplyObject(reply);
-        return values;
-    }
+  void set(const std::string& key, const std::string& value);  // 实现SET命令 
+  std::string get(const std::string& key);  // 实现GET命令
+  std::vector<std::string> lrange(const std::string& key, int start, int end);  // 实现LRANGE命令,用于获取列表中指定区间内的元素的命令
 
 private:
     redisContext* redis_;
 };
 
 
+class RedisConnPool {
+public:
+    // 获取数据库连接池，唯一实例
+    static RedisConnPool& Instance();
+
+    void Init(const char* host, int port, int connSize);  // connSize指设置的连接数量 
+    
+    Redis* GetConn();  // 获取数据库连接池中的连接
+    void FreeConn(Redis * conn);  // 释放连接
+
+    int GetFreeConnCount();  // 查询池中剩余连接
+    int GetCurrConnCount();
+
+    void ClosePool();  // 关闭连接池
+
+private:
+    RedisConnPool(): useCount_(0), freeCount_(0), MAX_CONN_(16) {}
+    ~RedisConnPool();
+    RedisConnPool(RedisConnPool&) = delete;  // 删除拷贝构造
+    RedisConnPool& operator=(RedisConnPool&) = delete;  // 删除拷贝赋值
+
+    int useCount_;  // 当前使用数
+    int freeCount_;  // 可使用连接数
+    int MAX_CONN_;  // 最大连接数 
+    
+    std::queue<Redis *> connQue_;  // 队列存储具体的数据库连接
+    std::mutex mtx_;  // 互斥锁实现互斥访问队列，保证多线程下的线程安全
+    sem_t semId_;  // 信号量实现同步
+};
+
+
+class RedisConnRAII {
+public:
+    RedisConnRAII(Redis** conn, RedisConnPool *connpool) {
+        *conn = connpool->GetConn();
+        conn_ = *conn;
+        pool_ = connpool;
+    }
+
+    ~RedisConnRAII() {
+       if(conn_) {
+          pool_->FreeConn(conn_);
+       }
+    }
+    
+private:
+    Redis* conn_;
+    RedisConnPool* pool_;
+};
 
 
 
+
+// 单元测试
 // int main() {
 //     try {
 //         // 创建Redis类的实例并连接到本地的Redis服务器
