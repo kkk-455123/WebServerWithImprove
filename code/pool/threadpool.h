@@ -57,6 +57,16 @@ public:
         pool_->cond.notify_one();
     }
 
+    void WaitForCompletion() {
+        if(static_cast<bool>(pool_)) {
+            {
+                std::lock_guard<std::mutex> locker(pool_->mtx);
+                pool_->isClosed = true;
+            }
+            pool_->cond.notify_all();
+        }
+    }
+
 private:
     struct Pool {
         std::mutex mtx;

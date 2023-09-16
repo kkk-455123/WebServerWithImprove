@@ -9,7 +9,11 @@
 * 利用单例模式与阻塞队列实现异步的日志系统，记录服务器运行状态；
 * 利用RAII机制实现了数据库连接池，减少数据库连接建立与关闭的开销，同时实现了用户注册登录功能。
 
-* 增加logsys,threadpool测试单元(todo: timer, sqlconnpool, httprequest, httpresponse) 
+* 增加logsys,threadpool测试单元(todo: timer, sqlconnpool, httprequest, httpresponse)
+### 追加功能
+* 利用RAII机制实现了Redis数据库连接池，在用户注册功能中MySQL查询验证流程之前添加了Redis查询
+* 使用Google Benchmark对组件进行单元测试
+* todo:动态扩容线程池 
 
 ## 环境要求
 * Linux
